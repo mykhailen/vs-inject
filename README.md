@@ -3,7 +3,8 @@
 Minimal typed dependency-injection container for TypeScript. Tokens double as
 parameter decorators, resolution is lazy-singleton, circular dependencies are
 detected and reported with the full chain. About 160 lines, zero runtime
-dependencies, ESM + CJS.
+dependencies, ESM + CJS. The design is a cut-down copy of the DI used inside
+[VS Code](#modeled-on-vs-codes-di).
 
 ```ts
 import { Container, Inject, token } from "vs-inject";
@@ -32,6 +33,34 @@ const c = new Container()
 
 c.get(Service).run();                // "cache size 100"
 ```
+
+## Modeled on VS Code's DI
+
+This is not a novel design. `vs-inject` deliberately copies the dependency
+injection approach that VS Code uses internally for all of its services
+(`src/vs/platform/instantiation` in the
+[microsoft/vscode](https://github.com/microsoft/vscode/tree/main/src/vs/platform/instantiation/common)
+repository), reduced to the parts a normal application needs. If you have
+read VS Code source, everything here should look familiar; if you haven't,
+the upstream files are the best reference for *why* it works this way.
+
+| `vs-inject` | VS Code equivalent | Where |
+|---|---|---|
+| `token<T>("name")` returns a value that is both the injection key and a parameter decorator | `createDecorator<T>("name")` returns a `ServiceIdentifier<T>` that is called as a parameter decorator | [instantiation.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/instantiation.ts) |
+| `Token<T>.__type` phantom member types the resolution result | `ServiceIdentifier<T>.type` phantom member | [instantiation.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/instantiation.ts) |
+| `interface IConfig` + `const IConfig = token<IConfig>(...)` sharing one name | `interface ILogService` + `const ILogService = createDecorator<ILogService>(...)`, the idiom used for every VS Code service | e.g. [log.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/log/common/log.ts) |
+| Decorators record `(class, parameterIndex, key)` in a `WeakMap` | `storeServiceDependency` records the same triple on the constructor; `getServiceDependencies` reads it back | [instantiation.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/instantiation.ts) |
+| `Container.register(key, Class \| factory)` | `ServiceCollection.set(id, new SyncDescriptor(Class))` | [serviceCollection.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/serviceCollection.ts), [descriptors.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/descriptors.ts) |
+| `Container.get(key)`: lazy, one instance per key, dependencies resolved recursively from the recorded parameter keys | `InstantiationService._getOrCreateServiceInstance` / `_createInstance` | [instantiationService.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/instantiationService.ts) |
+| `circular dependency: a -> b -> a` error | `CyclicDependencyError`, detected with a dependency `Graph` | [instantiationService.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/instantiationService.ts), [graph.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/graph.ts) |
+| No `reflect-metadata`, no `emitDecoratorMetadata`, keys always explicit | Same: VS Code's decorators carry the key themselves and never rely on emitted type metadata | [instantiation.ts](https://github.com/microsoft/vscode/blob/main/src/vs/platform/instantiation/common/instantiation.ts) |
+
+What is intentionally left out, because an application rarely needs it:
+VS Code's delayed-instantiation proxies, child instantiation services,
+`createInstance` for non-service classes with extra static arguments, and
+the global `registerSingleton` registry. `vs-inject` also adds `@Inject(Class)`
+for concrete classes and lets a class be registered as its own key; VS Code
+only injects through `ServiceIdentifier`s.
 
 ## Install
 
